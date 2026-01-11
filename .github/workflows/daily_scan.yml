@@ -1,0 +1,35 @@
+name: S&P 500 Email Scanner
+
+on:
+  schedule:
+    # Uruchomienie o 21:30 UTC (po zamknięciu rynków w USA)
+    # Dni: Poniedziałek - Piątek
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  scan_market:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas lxml requests
+          
+      - name: Run analysis script
+        # Przekazanie sekretów E-MAIL
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: python main.py
