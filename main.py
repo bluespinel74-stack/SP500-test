@@ -6,6 +6,11 @@ import datetime
 import sys
 from email.message import EmailMessage
 
+# --- NOWE IMPORTY ---
+import requests
+from io import StringIO 
+# --------------------
+
 # Konfiguracja zmiennych środowiskowych
 EMAIL_SENDER = os.environ.get('EMAIL_SENDER')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
@@ -15,11 +20,22 @@ SMTP_PORT = 465
 
 WIKI_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
 
+# --- POPRAWIONA FUNKCJA ---
 def get_sp500_tickers():
     try:
-        # Wymaga zainstalowanego lxml lub html5lib (pip install lxml)
-        tables = pd.read_html(WIKI_URL)
-        df = tables[0] # Zazwyczaj pierwsza tabela to ta właściwa
+        # Udajemy przeglądarkę Chrome, żeby Wikipedia nas nie blokowała
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        }
+        
+        print(f"Pobieranie listy spółek z: {WIKI_URL}")
+        response = requests.get(WIKI_URL, headers=headers)
+        response.raise_for_status() # Sprawdź czy nie ma błędu HTTP
+        
+        # Używamy StringIO, aby pandas potraktował tekst jako plik
+        tables = pd.read_html(StringIO(response.text))
+        
+        df = tables[0]
         tickers = df['Symbol'].tolist()
         tickers = [ticker.replace('.', '-') for ticker in tickers]
         print(f"Pobrano {len(tickers)} tickerów z S&P 500.")
@@ -27,6 +43,7 @@ def get_sp500_tickers():
     except Exception as e:
         print(f"Krytyczny błąd podczas pobierania listy tickerów: {e}")
         sys.exit(1)
+# --------------------------
 
 def fetch_data(tickers):
     print("Rozpoczynanie pobierania danych z Yahoo Finance...")
