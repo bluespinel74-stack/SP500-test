@@ -6,7 +6,7 @@ import datetime
 import sys
 from email.message import EmailMessage
 
-# Konfiguracja zmiennych środowiskowych (pobierane z GitHub Secrets)
+# Konfiguracja zmiennych środowiskowych
 EMAIL_SENDER = os.environ.get('EMAIL_SENDER')
 EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD')
 EMAIL_RECIPIENT = os.environ.get('EMAIL_RECIPIENT')
@@ -17,9 +17,10 @@ WIKI_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
 
 def get_sp500_tickers():
     try:
+        # Wymaga zainstalowanego lxml lub html5lib (pip install lxml)
         tables = pd.read_html(WIKI_URL)
-        df = tables
-        tickers = df.tolist()
+        df = tables[0] # Zazwyczaj pierwsza tabela to ta właściwa
+        tickers = df['Symbol'].tolist()
         tickers = [ticker.replace('.', '-') for ticker in tickers]
         print(f"Pobrano {len(tickers)} tickerów z S&P 500.")
         return tickers
@@ -30,6 +31,7 @@ def get_sp500_tickers():
 def fetch_data(tickers):
     print("Rozpoczynanie pobierania danych z Yahoo Finance...")
     try:
+        # group_by='ticker' jest kluczowe dla poprawnej struktury przy wielu tickerach
         data = yf.download(tickers, period="6mo", group_by='ticker', auto_adjust=True, progress=False, threads=True)
         return data
     except Exception as e:
@@ -37,12 +39,14 @@ def fetch_data(tickers):
         sys.exit(1)
 
 def calculate_signals(data, tickers):
-    bullish_signals =
-    bearish_signals =
+    # --- POPRAWKA TUTAJ: Dodano puste listy [] ---
+    bullish_signals = []
+    bearish_signals = []
     
     for ticker in tickers:
         try:
-            if ticker not in data.columns.levels:
+            # Obsługa struktury MultiIndex z yfinance
+            if ticker not in data.columns.levels[0]:
                 continue
 
             df = data[ticker].dropna()
@@ -59,6 +63,7 @@ def calculate_signals(data, tickers):
             if pd.isna(today['MA20']) or pd.isna(today['MA50']) or pd.isna(yesterday['MA20']) or pd.isna(yesterday['MA50']):
                 continue
 
+            # Golden Cross
             if yesterday['MA20'] <= yesterday['MA50'] and today['MA20'] > today['MA50']:
                 bullish_signals.append({
                     'ticker': ticker,
@@ -67,6 +72,7 @@ def calculate_signals(data, tickers):
                     'ma50': today['MA50']
                 })
             
+            # Death Cross
             elif yesterday['MA20'] >= yesterday['MA50'] and today['MA20'] < today['MA50']:
                 bearish_signals.append({
                     'ticker': ticker,
@@ -121,9 +127,11 @@ def send_email_alert(bullish, bearish):
     """
 
     msg = EmailMessage()
-    msg = subject
+    # --- POPRAWKA TUTAJ: Ustawianie nagłówków zamiast nadpisywania obiektu ---
+    msg['Subject'] = subject
     msg['From'] = EMAIL_SENDER
-    msg = EMAIL_RECIPIENT
+    msg['To'] = EMAIL_RECIPIENT
+    
     msg.set_content("Twoja skrzynka nie obsługuje HTML.")
     msg.add_alternative(html_content, subtype='html')
 
@@ -134,6 +142,26 @@ def send_email_alert(bullish, bearish):
             print("E-mail został wysłany pomyślnie.")
     except Exception as e:
         print(f"Błąd wysyłki e-maila: {e}")
+
+# --- POPRAWKA TUTAJ: Definicja funkcji main ---
+def main():
+    tickers = get_sp500_tickers()
+    if not tickers:
+        print("Nie udało się pobrać tickerów.")
+        return
+
+    data = fetch_data(tickers)
+    if data is None or data.empty:
+        print("Nie udało się pobrać danych giełdowych.")
+        return
+
+    bullish, bearish = calculate_signals(data, tickers)
+    
+    print(f"Podsumowanie: {len(bullish)} Golden Cross, {len(bearish)} Death Cross.")
+    
+    # Wyślij maila nawet jeśli puste (żeby potwierdzić działanie), 
+    # lub dodaj warunek "if bullish or bearish:"
+    send_email_alert(bullish, bearish)
 
 if __name__ == "__main__":
     main()
