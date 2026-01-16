@@ -18,69 +18,44 @@ EMAIL_RECIPIENT = os.environ.get('EMAIL_RECIPIENT')
 SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 465
 
+# --- URL WIKIPEDII (S&P 600) ---
+WIKI_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_600_companies'
+
 # --- PARAMETRY STRATEGII ---
-MIN_ADX = 20           
-MIN_RVOL = 1.0         
-MAX_RSI_LONG = 70      
+MIN_ADX = 20           # Siła trendu (mniej restrykcyjna)
+MIN_RVOL = 1.0         # Relative Volume
+MAX_RSI_LONG = 70      # Bezpieczny poziom wejścia
 MIN_RSI_SHORT = 30     
 
-# --- PARAMETRY FILTRACJI ---
-MIN_PRICE = 5.0        
-MIN_AVG_VOLUME = 50000 
+# --- FILTRY PŁYNNOŚCI (Dla małych spółek) ---
+MIN_PRICE = 5.0        # Odrzucamy groszowe (< $5)
+MIN_AVG_VOLUME = 50000 # Odrzucamy martwe (< 50k obrotu)
 
-# --- ŹRÓDŁA DANYCH ---
-# Źródło 1: GitHub (może wygasnąć)
-RUSSELL_URL = 'https://raw.githubusercontent.com/benjaminbowen/Russell-2000-Ticker-List/main/russell-2000-ticker-list.csv'
-# Źródło 2: Wikipedia S&P 600 Small Cap (Zapasowe, bardzo stabilne)
-WIKI_SP600_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_600_companies'
-
-def get_tickers_robust():
-    """
-    Próbuje pobrać Russell 2000. W razie błędu 404, pobiera S&P 600 z Wikipedii.
-    """
-    # --- METODA 1: Russell 2000 z GitHub ---
-    print(f"Próba 1: Pobieranie Russell 2000 z GitHub...")
+def get_sp600_tickers():
+    print(f"Pobieranie listy S&P 600 z Wikipedii...")
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(RUSSELL_URL, headers=headers)
+        # Udajemy przeglądarkę
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         
-        if response.status_code == 200:
-            # Próba parsowania CSV
-            try:
-                # Niektóre listy mają nagłówki, inne nie. Sprawdzamy strukturę.
-                content = response.text
-                df = pd.read_csv(StringIO(content))
-                
-                # Szukamy kolumny z tickerami (zazwyczaj pierwsza lub 'Ticker'/'Symbol')
-                if 'Ticker' in df.columns:
-                    tickers = df['Ticker'].tolist()
-                elif 'Symbol' in df.columns:
-                    tickers = df['Symbol'].tolist()
-                else:
-                    tickers = df.iloc[:, 0].tolist()
-                
-                tickers = [str(t).strip().replace('.', '-') for t in tickers if isinstance(t, str)]
-                print(f"Sukces! Pobrano {len(tickers)} tickerów z Russell 2000.")
-                return tickers
-            except Exception as e:
-                print(f"Błąd parsowania CSV Russell: {e}")
-        else:
-            print(f"Błąd HTTP Russell: {response.status_code}")
-
-    except Exception as e:
-        print(f"Błąd połączenia z GitHub: {e}")
-
-    # --- METODA 2: S&P 600 Small Cap (Wikipedia) ---
-    print("⚠️ Przełączanie na źródło zapasowe: S&P 600 Small Cap (Wikipedia)...")
-    try:
-        tables = pd.read_html(WIKI_SP600_URL)
-        df = tables[0] # Pierwsza tabela to zazwyczaj lista spółek
+        response = requests.get(WIKI_URL, headers=headers)
+        response.raise_for_status()
+        
+        # Pandas parsuje HTML
+        tables = pd.read_html(StringIO(response.text))
+        
+        # Zazwyczaj pierwsza tabela to lista spółek
+        df = tables[0]
+        
+        # Szukamy kolumny Symbol
         tickers = df['Symbol'].tolist()
+        
+        # Zamiana kropek na myślniki (np. BRK.B -> BRK-B) dla Yahoo Finance
         tickers = [t.replace('.', '-') for t in tickers]
-        print(f"Sukces! Pobrano {len(tickers)} tickerów z S&P 600 (Small Caps).")
+        
+        print(f"Sukces! Pobrano {len(tickers)} tickerów.")
         return tickers
     except Exception as e:
-        print(f"Krytyczny błąd pobierania zapasowego źródła: {e}")
+        print(f"Krytyczny błąd pobierania listy z Wikipedii: {e}")
         sys.exit(1)
 
 def calculate_rsi(series, period=14):
@@ -120,13 +95,15 @@ def process_batch(tickers_batch):
     bearish = []
     
     try:
+        # Pobieranie danych
         data = yf.download(tickers_batch, period="6mo", group_by='ticker', auto_adjust=True, progress=False, threads=True)
         
-        # Fix dla 1 tickera
+        # Obsługa przypadku 1 tickera w paczce
         if len(tickers_batch) == 1: pass
 
         for ticker in tickers_batch:
             try:
+                # Obsługa struktury DataFrame (MultiIndex vs Single)
                 if isinstance(data.columns, pd.MultiIndex):
                     if ticker not in data.columns.levels[0]: continue
                     df = data[ticker].copy()
@@ -134,15 +111,18 @@ def process_batch(tickers_batch):
                     if len(tickers_batch) == 1: df = data.copy()
                     else: continue
                 
+                # Czyszczenie danych
                 df.dropna(inplace=True)
                 if len(df) < 60: continue
 
+                # --- FILTRY PŁYNNOŚCI ---
                 current_price = df['Close'].iloc[-1]
                 avg_vol = df['Volume'].rolling(window=20).mean().iloc[-1]
 
                 if current_price < MIN_PRICE: continue
                 if avg_vol < MIN_AVG_VOLUME: continue
 
+                # --- WSKAŹNIKI ---
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['MA50'] = df['Close'].rolling(window=50).mean()
                 df['RSI'] = calculate_rsi(df['Close'])
@@ -154,7 +134,8 @@ def process_batch(tickers_batch):
 
                 if pd.isna(today['ADX']) or pd.isna(yesterday['ADX']): continue
 
-                # Filtr ADX
+                # --- WARUNEK ADX ---
+                # ADX > 20 ORAZ (Rośnie LUB jest bardzo silny > 30)
                 is_adx_ok = (today['ADX'] > MIN_ADX) and (today['ADX'] > yesterday['ADX'] or today['ADX'] > 30)
                 if not is_adx_ok: continue
 
@@ -162,6 +143,8 @@ def process_batch(tickers_batch):
                 if today['VolMA20'] > 0:
                     vol_ratio = today['Volume'] / today['VolMA20']
 
+                # --- SYGNAŁY ---
+                # Golden Cross
                 if (yesterday['MA20'] <= yesterday['MA50'] and today['MA20'] > today['MA50']):
                     if today['RSI'] <= MAX_RSI_LONG:
                         bullish.append({
@@ -169,6 +152,7 @@ def process_batch(tickers_batch):
                             'adx': today['ADX'], 'rsi': today['RSI'], 'vol_ratio': vol_ratio
                         })
 
+                # Death Cross
                 elif (yesterday['MA20'] >= yesterday['MA50'] and today['MA20'] < today['MA50']):
                     if today['RSI'] >= MIN_RSI_SHORT:
                         bearish.append({
@@ -183,35 +167,37 @@ def process_batch(tickers_batch):
         
     return bullish, bearish
 
-def send_email_alert(bullish, bearish, source_name):
+def send_email_alert(bullish, bearish):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECIPIENT:
-        print(f"Symulacja. Bycze: {len(bullish)}, Niedźwiedzie: {len(bearish)}")
-        if bullish: print(f"Sample Bull: {[x['ticker'] for x in bullish[:3]]}")
+        print(f"--- TRYB TESTOWY (Brak maila) ---")
+        print(f"Znaleziono: {len(bullish)} Byczych, {len(bearish)} Niedźwiedzich.")
+        if bullish: print(f"Przykładowe Bycze: {[x['ticker'] for x in bullish[:5]]}")
         return
 
     date_str = datetime.date.today().strftime('%Y-%m-%d')
-    subject = f"Small Caps Report ({source_name}) - {date_str}"
+    subject = f"Raport S&P 600 (Small Cap) - {date_str}"
     
     bullish.sort(key=lambda x: x['adx'], reverse=True)
     bearish.sort(key=lambda x: x['adx'], reverse=True)
     
+    # Top 25 dla czytelności
     top_bullish = bullish[:25]
     top_bearish = bearish[:25]
 
     html_content = f"""
     <html>
       <body style="font-family: Arial, sans-serif;">
-        <h2>Raport Small Caps ({source_name})</h2>
+        <h2>Raport S&P 600 (Small Cap)</h2>
         <p>Data: <b>{date_str}</b></p>
         <div style="font-size: small; color: #555; background-color: #f4f4f4; padding: 10px;">
-            Filtry: Cena > ${MIN_PRICE}, AvgVol > {MIN_AVG_VOLUME/1000:.0f}k<br>
-            ADX > {MIN_ADX}, RSI 30-70.
+            <b>Filtry:</b> Cena > ${MIN_PRICE}, Vol > {MIN_AVG_VOLUME/1000:.0f}k<br>
+            <b>Strategia:</b> MA20/50 Cross + ADX > {MIN_ADX} + RSI 30-70.
         </div>
         <hr>
     """
     
     if not top_bullish and not top_bearish:
-        html_content += "<p>Brak silnych sygnałów na płynnych spółkach.</p>"
+        html_content += "<p>Brak sygnałów spełniających kryteria.</p>"
     
     if top_bullish:
         html_content += f"<h3 style='color: green;'>🚀 Top {len(top_bullish)} Golden Cross</h3><ul>"
@@ -242,20 +228,19 @@ def send_email_alert(bullish, bearish, source_name):
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
             smtp.send_message(msg)
-            print("E-mail wysłany.")
+            print("E-mail wysłany pomyślnie.")
     except Exception as e:
         print(f"Błąd wysyłki: {e}")
 
 def main():
-    # Pobieranie tickerów z failoverem
-    tickers = get_tickers_robust()
-    source_name = "Russell 2000" if len(tickers) > 1000 else "S&P 600"
+    tickers = get_sp600_tickers()
     
+    # Batching jest nadal ważny, żeby nie przeciążyć API przy 600 spółkach
     BATCH_SIZE = 100
     total_bullish = []
     total_bearish = []
     
-    print(f"Rozpoczynanie analizy {len(tickers)} spółek...")
+    print(f"Analiza {len(tickers)} spółek w paczkach po {BATCH_SIZE}...")
     
     for i in range(0, len(tickers), BATCH_SIZE):
         batch = tickers[i:i + BATCH_SIZE]
@@ -269,7 +254,7 @@ def main():
         gc.collect() 
 
     print(f"Koniec. Znaleziono: {len(total_bullish)} Byczych, {len(total_bearish)} Niedźwiedzich.")
-    send_email_alert(total_bullish, total_bearish, source_name)
+    send_email_alert(total_bullish, total_bearish)
 
 if __name__ == "__main__":
     main()
