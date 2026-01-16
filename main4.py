@@ -28,35 +28,59 @@ MIN_RSI_SHORT = 30
 MIN_PRICE = 5.0        
 MIN_AVG_VOLUME = 50000 
 
-# --- NOWE ŹRÓDŁO DANYCH (CSV) ---
-# Używamy innego repozytorium, które jest publiczne i zawiera plik CSV
-RUSSELL_URL = 'https://raw.githubusercontent.com/fja05680/sp500/master/russell2000.csv'
+# --- ŹRÓDŁA DANYCH ---
+# Źródło 1: GitHub (może wygasnąć)
+RUSSELL_URL = 'https://raw.githubusercontent.com/benjaminbowen/Russell-2000-Ticker-List/main/russell-2000-ticker-list.csv'
+# Źródło 2: Wikipedia S&P 600 Small Cap (Zapasowe, bardzo stabilne)
+WIKI_SP600_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_600_companies'
 
-def get_russell2000_tickers():
-    print("Pobieranie listy tickerów Russell 2000...")
+def get_tickers_robust():
+    """
+    Próbuje pobrać Russell 2000. W razie błędu 404, pobiera S&P 600 z Wikipedii.
+    """
+    # --- METODA 1: Russell 2000 z GitHub ---
+    print(f"Próba 1: Pobieranie Russell 2000 z GitHub...")
     try:
-        # Udajemy przeglądarkę
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(RUSSELL_URL, headers=headers)
-        response.raise_for_status()
         
-        # Parsowanie CSV
-        # Plik zazwyczaj ma nagłówek 'Symbol' lub 'Ticker'
-        df = pd.read_csv(StringIO(response.text))
-        
-        # Bierzemy pierwszą kolumnę, niezależnie od nazwy nagłówka
-        tickers = df.iloc[:, 0].tolist()
-        
-        # Czyszczenie (usuwanie pustych, spacji, zamiana kropek na myślniki)
-        tickers = [str(t).strip().replace('.', '-') for t in tickers if str(t).strip()]
-        
-        if len(tickers) < 100:
-            raise ValueError("Pobrano podejrzanie mało tickerów.")
-            
-        print(f"Załadowano {len(tickers)} tickerów.")
+        if response.status_code == 200:
+            # Próba parsowania CSV
+            try:
+                # Niektóre listy mają nagłówki, inne nie. Sprawdzamy strukturę.
+                content = response.text
+                df = pd.read_csv(StringIO(content))
+                
+                # Szukamy kolumny z tickerami (zazwyczaj pierwsza lub 'Ticker'/'Symbol')
+                if 'Ticker' in df.columns:
+                    tickers = df['Ticker'].tolist()
+                elif 'Symbol' in df.columns:
+                    tickers = df['Symbol'].tolist()
+                else:
+                    tickers = df.iloc[:, 0].tolist()
+                
+                tickers = [str(t).strip().replace('.', '-') for t in tickers if isinstance(t, str)]
+                print(f"Sukces! Pobrano {len(tickers)} tickerów z Russell 2000.")
+                return tickers
+            except Exception as e:
+                print(f"Błąd parsowania CSV Russell: {e}")
+        else:
+            print(f"Błąd HTTP Russell: {response.status_code}")
+
+    except Exception as e:
+        print(f"Błąd połączenia z GitHub: {e}")
+
+    # --- METODA 2: S&P 600 Small Cap (Wikipedia) ---
+    print("⚠️ Przełączanie na źródło zapasowe: S&P 600 Small Cap (Wikipedia)...")
+    try:
+        tables = pd.read_html(WIKI_SP600_URL)
+        df = tables[0] # Pierwsza tabela to zazwyczaj lista spółek
+        tickers = df['Symbol'].tolist()
+        tickers = [t.replace('.', '-') for t in tickers]
+        print(f"Sukces! Pobrano {len(tickers)} tickerów z S&P 600 (Small Caps).")
         return tickers
     except Exception as e:
-        print(f"Błąd pobierania listy: {e}")
+        print(f"Krytyczny błąd pobierania zapasowego źródła: {e}")
         sys.exit(1)
 
 def calculate_rsi(series, period=14):
@@ -98,9 +122,8 @@ def process_batch(tickers_batch):
     try:
         data = yf.download(tickers_batch, period="6mo", group_by='ticker', auto_adjust=True, progress=False, threads=True)
         
-        # Fix dla przypadku 1 tickera w paczce
-        if len(tickers_batch) == 1:
-           pass
+        # Fix dla 1 tickera
+        if len(tickers_batch) == 1: pass
 
         for ticker in tickers_batch:
             try:
@@ -160,15 +183,14 @@ def process_batch(tickers_batch):
         
     return bullish, bearish
 
-def send_email_alert(bullish, bearish):
+def send_email_alert(bullish, bearish, source_name):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECIPIENT:
         print(f"Symulacja. Bycze: {len(bullish)}, Niedźwiedzie: {len(bearish)}")
-        # Wypisz przykładowe tickery w konsoli do testów
-        if bullish: print(f"Przykładowe bycze: {[x['ticker'] for x in bullish[:5]]}")
+        if bullish: print(f"Sample Bull: {[x['ticker'] for x in bullish[:3]]}")
         return
 
     date_str = datetime.date.today().strftime('%Y-%m-%d')
-    subject = f"Russell 2000 Report - {date_str}"
+    subject = f"Small Caps Report ({source_name}) - {date_str}"
     
     bullish.sort(key=lambda x: x['adx'], reverse=True)
     bearish.sort(key=lambda x: x['adx'], reverse=True)
@@ -179,8 +201,8 @@ def send_email_alert(bullish, bearish):
     html_content = f"""
     <html>
       <body style="font-family: Arial, sans-serif;">
-        <h2>Raport Russell 2000 (Small Caps)</h2>
-        <p>Data: <b>{date_str}</b> | Przeskanowano ~2000 spółek.</p>
+        <h2>Raport Small Caps ({source_name})</h2>
+        <p>Data: <b>{date_str}</b></p>
         <div style="font-size: small; color: #555; background-color: #f4f4f4; padding: 10px;">
             Filtry: Cena > ${MIN_PRICE}, AvgVol > {MIN_AVG_VOLUME/1000:.0f}k<br>
             ADX > {MIN_ADX}, RSI 30-70.
@@ -225,17 +247,19 @@ def send_email_alert(bullish, bearish):
         print(f"Błąd wysyłki: {e}")
 
 def main():
-    all_tickers = get_russell2000_tickers()
+    # Pobieranie tickerów z failoverem
+    tickers = get_tickers_robust()
+    source_name = "Russell 2000" if len(tickers) > 1000 else "S&P 600"
     
     BATCH_SIZE = 100
     total_bullish = []
     total_bearish = []
     
-    print(f"Rozpoczynanie analizy w paczkach po {BATCH_SIZE}...")
+    print(f"Rozpoczynanie analizy {len(tickers)} spółek...")
     
-    for i in range(0, len(all_tickers), BATCH_SIZE):
-        batch = all_tickers[i:i + BATCH_SIZE]
-        print(f"Przetwarzanie {i} do {i + len(batch)} z {len(all_tickers)}...")
+    for i in range(0, len(tickers), BATCH_SIZE):
+        batch = tickers[i:i + BATCH_SIZE]
+        print(f"Przetwarzanie {i} do {i + len(batch)}...")
         
         b_bull, b_bear = process_batch(batch)
         total_bullish.extend(b_bull)
@@ -245,7 +269,7 @@ def main():
         gc.collect() 
 
     print(f"Koniec. Znaleziono: {len(total_bullish)} Byczych, {len(total_bearish)} Niedźwiedzich.")
-    send_email_alert(total_bullish, total_bearish)
+    send_email_alert(total_bullish, total_bearish, source_name)
 
 if __name__ == "__main__":
     main()
