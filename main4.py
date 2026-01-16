@@ -7,7 +7,7 @@ import datetime
 import sys
 import requests
 import time
-import gc # Garbage Collector do zwalniania pamięci
+import gc
 from io import StringIO
 from email.message import EmailMessage
 
@@ -19,31 +19,37 @@ SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 465
 
 # --- PARAMETRY STRATEGII ---
-MIN_ADX = 20           # Siła trendu
-MIN_RVOL = 1.0         # Relative Volume
+MIN_ADX = 20           
+MIN_RVOL = 1.0         
 MAX_RSI_LONG = 70      
 MIN_RSI_SHORT = 30     
 
-# --- PARAMETRY FILTRACJI ŚMIECIOWYCH SPÓŁEK (NOWOŚĆ) ---
-MIN_PRICE = 5.0        # Odrzucamy spółki tańsze niż $5 (Penny Stocks)
-MIN_AVG_VOLUME = 50000 # Minimalny średni wolumen (płynność)
+# --- PARAMETRY FILTRACJI ---
+MIN_PRICE = 5.0        
+MIN_AVG_VOLUME = 50000 
 
-# Źródło tickerów (Listy z GitHub są zazwyczaj najbardziej aktualne dla R2000 za darmo)
-RUSSELL_URL = 'https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/russell2000/russell2000_tickers.txt'
+# --- NOWE ŹRÓDŁO DANYCH (CSV) ---
+# Używamy innego repozytorium, które jest publiczne i zawiera plik CSV
+RUSSELL_URL = 'https://raw.githubusercontent.com/fja05680/sp500/master/russell2000.csv'
 
 def get_russell2000_tickers():
     print("Pobieranie listy tickerów Russell 2000...")
     try:
-        response = requests.get(RUSSELL_URL)
+        # Udajemy przeglądarkę
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        response = requests.get(RUSSELL_URL, headers=headers)
         response.raise_for_status()
-        # Zakładamy, że tickery są w pliku tekstowym, jeden pod drugim lub po przecinku
-        content = response.text.replace('\n', ',').replace(';', ',')
-        tickers = [t.strip() for t in content.split(',') if t.strip()]
         
-        # Czyszczenie tickerów (zamiana kropki na myślnik dla Yahoo, np. BRK.B -> BRK-B)
-        tickers = [ticker.replace('.', '-') for ticker in tickers]
+        # Parsowanie CSV
+        # Plik zazwyczaj ma nagłówek 'Symbol' lub 'Ticker'
+        df = pd.read_csv(StringIO(response.text))
         
-        # Limit bezpieczeństwa (gdyby lista była pusta)
+        # Bierzemy pierwszą kolumnę, niezależnie od nazwy nagłówka
+        tickers = df.iloc[:, 0].tolist()
+        
+        # Czyszczenie (usuwanie pustych, spacji, zamiana kropek na myślniki)
+        tickers = [str(t).strip().replace('.', '-') for t in tickers if str(t).strip()]
+        
         if len(tickers) < 100:
             raise ValueError("Pobrano podejrzanie mało tickerów.")
             
@@ -51,7 +57,6 @@ def get_russell2000_tickers():
         return tickers
     except Exception as e:
         print(f"Błąd pobierania listy: {e}")
-        # Fallback: Jeśli link padnie, tu można wstawić ręczną listę lub inne źródło
         sys.exit(1)
 
 def calculate_rsi(series, period=14):
@@ -79,7 +84,6 @@ def calculate_adx(df, period=14):
     plus_di = 100 * (pd.Series(plus_dm).ewm(alpha=1/period, min_periods=period).mean() / atr)
     minus_di = 100 * (pd.Series(minus_dm).ewm(alpha=1/period, min_periods=period).mean() / atr)
     
-    # Zabezpieczenie przed dzieleniem przez zero
     div = plus_di + minus_di
     div = div.replace(0, 1)
     
@@ -88,43 +92,34 @@ def calculate_adx(df, period=14):
     return adx
 
 def process_batch(tickers_batch):
-    """Przetwarza małą paczkę tickerów i zwraca sygnały."""
     bullish = []
     bearish = []
     
     try:
-        # Pobieranie danych tylko dla paczki (np. 100 sztuk)
         data = yf.download(tickers_batch, period="6mo", group_by='ticker', auto_adjust=True, progress=False, threads=True)
         
-        # Jeśli pobraliśmy tylko 1 ticker, struktura DataFrame jest inna, naprawiamy to:
+        # Fix dla przypadku 1 tickera w paczce
         if len(tickers_batch) == 1:
-            # yfinance dla 1 tickera nie robi MultiIndex w kolumnach
-            # Musimy to obsłużyć, ale przy batch=100 rzadko wystąpi.
-            # Dla uproszczenia w pętli iterujemy po tickerach z listy.
-            pass 
+           pass
 
         for ticker in tickers_batch:
             try:
-                # Obsługa różnych struktur yfinance
                 if isinstance(data.columns, pd.MultiIndex):
                     if ticker not in data.columns.levels[0]: continue
                     df = data[ticker].copy()
                 else:
-                    # Przypadek gdy pobrano tylko 1 firmę poprawnie
                     if len(tickers_batch) == 1: df = data.copy()
                     else: continue
                 
                 df.dropna(inplace=True)
                 if len(df) < 60: continue
 
-                # --- NOWE FILTRY PŁYNNOŚCI ---
                 current_price = df['Close'].iloc[-1]
                 avg_vol = df['Volume'].rolling(window=20).mean().iloc[-1]
 
-                if current_price < MIN_PRICE: continue      # Odrzuć groszowe
-                if avg_vol < MIN_AVG_VOLUME: continue       # Odrzuć martwe spółki
+                if current_price < MIN_PRICE: continue
+                if avg_vol < MIN_AVG_VOLUME: continue
 
-                # Wskaźniki
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['MA50'] = df['Close'].rolling(window=50).mean()
                 df['RSI'] = calculate_rsi(df['Close'])
@@ -136,7 +131,7 @@ def process_batch(tickers_batch):
 
                 if pd.isna(today['ADX']) or pd.isna(yesterday['ADX']): continue
 
-                # Filtr ADX (mniej restrykcyjny)
+                # Filtr ADX
                 is_adx_ok = (today['ADX'] > MIN_ADX) and (today['ADX'] > yesterday['ADX'] or today['ADX'] > 30)
                 if not is_adx_ok: continue
 
@@ -144,7 +139,6 @@ def process_batch(tickers_batch):
                 if today['VolMA20'] > 0:
                     vol_ratio = today['Volume'] / today['VolMA20']
 
-                # Sygnały
                 if (yesterday['MA20'] <= yesterday['MA50'] and today['MA20'] > today['MA50']):
                     if today['RSI'] <= MAX_RSI_LONG:
                         bullish.append({
@@ -168,7 +162,9 @@ def process_batch(tickers_batch):
 
 def send_email_alert(bullish, bearish):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECIPIENT:
-        print(f"Symulacja wysyłki. Bycze: {len(bullish)}, Niedźwiedzie: {len(bearish)}")
+        print(f"Symulacja. Bycze: {len(bullish)}, Niedźwiedzie: {len(bearish)}")
+        # Wypisz przykładowe tickery w konsoli do testów
+        if bullish: print(f"Przykładowe bycze: {[x['ticker'] for x in bullish[:5]]}")
         return
 
     date_str = datetime.date.today().strftime('%Y-%m-%d')
@@ -177,16 +173,15 @@ def send_email_alert(bullish, bearish):
     bullish.sort(key=lambda x: x['adx'], reverse=True)
     bearish.sort(key=lambda x: x['adx'], reverse=True)
     
-    # Skracamy listę do TOP 20, żeby nie zapchać maila przy R2000
-    top_bullish = bullish[:20]
-    top_bearish = bearish[:20]
+    top_bullish = bullish[:25]
+    top_bearish = bearish[:25]
 
     html_content = f"""
     <html>
       <body style="font-family: Arial, sans-serif;">
         <h2>Raport Russell 2000 (Small Caps)</h2>
         <p>Data: <b>{date_str}</b> | Przeskanowano ~2000 spółek.</p>
-        <div style="font-size: small; color: #555;">
+        <div style="font-size: small; color: #555; background-color: #f4f4f4; padding: 10px;">
             Filtry: Cena > ${MIN_PRICE}, AvgVol > {MIN_AVG_VOLUME/1000:.0f}k<br>
             ADX > {MIN_ADX}, RSI 30-70.
         </div>
@@ -203,7 +198,6 @@ def send_email_alert(bullish, bearish):
             bg = "background-color: #e6fffa;" if strong_vol else ""
             html_content += f"<li style='{bg}'><b>{item['ticker']}</b> (${item['close']:.2f}) - ADX: {item['adx']:.1f}, Vol: {item['vol_ratio']:.1f}x</li>"
         html_content += "</ul>"
-        if len(bullish) > 20: html_content += f"<p>...i {len(bullish)-20} więcej.</p>"
 
     if top_bearish:
         html_content += f"<h3 style='color: red;'>📉 Top {len(top_bearish)} Death Cross</h3><ul>"
@@ -212,7 +206,6 @@ def send_email_alert(bullish, bearish):
             bg = "background-color: #fff5f5;" if strong_vol else ""
             html_content += f"<li style='{bg}'><b>{item['ticker']}</b> (${item['close']:.2f}) - ADX: {item['adx']:.1f}, Vol: {item['vol_ratio']:.1f}x</li>"
         html_content += "</ul>"
-        if len(bearish) > 20: html_content += f"<p>...i {len(bearish)-20} więcej.</p>"
 
     html_content += "</body></html>"
 
@@ -234,7 +227,6 @@ def send_email_alert(bullish, bearish):
 def main():
     all_tickers = get_russell2000_tickers()
     
-    # --- BATCH PROCESSING (Kluczowe dla dużej liczby spółek) ---
     BATCH_SIZE = 100
     total_bullish = []
     total_bearish = []
@@ -243,15 +235,14 @@ def main():
     
     for i in range(0, len(all_tickers), BATCH_SIZE):
         batch = all_tickers[i:i + BATCH_SIZE]
-        print(f"Przetwarzanie {i} do {i + len(batch)}...")
+        print(f"Przetwarzanie {i} do {i + len(batch)} z {len(all_tickers)}...")
         
         b_bull, b_bear = process_batch(batch)
         total_bullish.extend(b_bull)
         total_bearish.extend(b_bear)
         
-        # Mała pauza, żeby Yahoo nas nie zbanowało
         time.sleep(1) 
-        gc.collect() # Czyść pamięć
+        gc.collect() 
 
     print(f"Koniec. Znaleziono: {len(total_bullish)} Byczych, {len(total_bearish)} Niedźwiedzich.")
     send_email_alert(total_bullish, total_bearish)
