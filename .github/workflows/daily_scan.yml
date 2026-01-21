@@ -2,7 +2,6 @@ name: S&P 500 & 600 Unified Daily Scanner
 
 on:
   schedule:
-    # Uruchomienie o 22:30 UTC (po zamknięciu rynków w USA i przetworzeniu danych przez Yahoo)
     - cron: '30 22 * * 1-5'
   workflow_dispatch:
 
@@ -17,12 +16,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          # Zmiana na 3.12 rozwiązuje konflikty wersji, o których wspominają logi
+          python-version: '3.12'
           
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install yfinance pandas lxml pandas_ta requests
+          # Używamy oficjalnej nazwy 'pandas-ta' oraz dodajemy html5lib dla stabilności read_html
+          pip install yfinance pandas lxml pandas-ta requests html5lib
           
       - name: Run Market Analysis
         env:
