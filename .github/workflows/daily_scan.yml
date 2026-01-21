@@ -1,14 +1,13 @@
-name: S&P 500 Email Scanner
+name: S&P 500 & 600 Unified Daily Scanner
 
 on:
   schedule:
-    # Uruchomienie o 21:30 UTC (po zamknięciu rynków w USA)
-    # Dni: Poniedziałek - Piątek
-    - cron: '30 21 * * 1-5'
-  workflow_dispatch: # Pozwala na ręczne uruchomienie przyciskiem "Run workflow"
+    # Uruchomienie o 22:30 UTC (po zamknięciu rynków w USA i przetworzeniu danych przez Yahoo)
+    - cron: '30 22 * * 1-5'
+  workflow_dispatch:
 
 jobs:
-  scan_market:
+  scan_and_report:
     runs-on: ubuntu-latest
     
     steps:
@@ -19,17 +18,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          # USUNIĘTO LINIE: cache: 'pip' - to naprawia błąd "No file matched"
           
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install yfinance pandas lxml
-          # Biblioteka 'requests' została usunięta, bo smtplib jest wbudowany w Pythona
+          pip install yfinance pandas lxml pandas_ta requests
           
-      - name: Run analysis script
+      - name: Run Market Analysis
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
-        run: python main.py 
+        run: python SP500_SP600_scan.py
