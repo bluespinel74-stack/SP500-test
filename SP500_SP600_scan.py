@@ -59,8 +59,7 @@ def analyze_market(metadata, lookback_window=5):
             df['RSI'] = ta.rsi(df['Close'], length=14)
             adx_df = ta.adx(df['High'], df['Low'], df['Close'], length=14)
             
-            found_type = None
-            sessions_ago = 0
+            found_type, sessions_ago = None, 0
             
             for i in range(1, lookback_window + 1):
                 today_idx, yesterday_idx = -i, -(i + 1)
@@ -104,8 +103,7 @@ def create_sector_summary(bullish, bearish):
     
     rows = ""
     for sector in all_sectors:
-        b_count = b_sectors.get(sector, 0)
-        d_count = d_sectors.get(sector, 0)
+        b_count, d_count = b_sectors.get(sector, 0), d_sectors.get(sector, 0)
         rows += f"""
         <tr>
             <td style="padding: 4px 10px; border-bottom: 1px solid #eee;">{sector}</td>
@@ -115,7 +113,7 @@ def create_sector_summary(bullish, bearish):
         
     return f"""
     <div style="margin: 10px 0; padding: 10px; background-color: #fcfcfc; border: 1px solid #eee; border-radius: 5px; display: inline-block;">
-        <h4 style="margin: 0 0 8px 0; color: #555; font-size: 13px;">Sektory - Podsumowanie:</h4>
+        <h4 style="margin: 0 0 8px 0; color: #555; font-size: 13px;">Sektory - Podsumowanie (5 sesji):</h4>
         <table style="font-size: 11px; border-collapse: collapse;">
             <tr style="text-align: left; background: #f0f0f0;">
                 <th style="padding: 4px 10px;">Sektor</th>
@@ -127,12 +125,19 @@ def create_sector_summary(bullish, bearish):
     </div>"""
 
 def create_table_html(signals):
-    if not signals: return "<p style='color: gray; font-size: 12px;'>Brak sygnałów w oknie 5 dni.</p>"
+    if not signals: return "<p style='color: gray; font-size: 12px;'>Brak sygnałów.</p>"
     
     rows = ""
     for s in signals:
-        age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']}d"
-        # Przywrócone style kolorystyczne
+        # --- KOLOROWANIE WIEKU (DLA WARTOŚCI DZISIAJ) ---
+        if s['age'] == 0:
+            age_text = "Dzisiaj"
+            age_td_style = "background-color: #007bff; color: white; font-weight: bold; border-radius: 3px;"
+        else:
+            age_text = f"{s['age']}d"
+            age_td_style = "color: #7f8c8d;"
+
+        # Pozostałe style
         rsi_style = "color: #e67e22; font-weight: bold;" if s['rsi'] > 70 or s['rsi'] < 30 else ""
         vol_style = "color: #27ae60; font-weight: bold;" if s['vol_ratio'] > 1.5 else ""
         dist_style = "color: #e74c3c;" if abs(s['dist_ma20']) > 5 else ""
@@ -142,7 +147,7 @@ def create_table_html(signals):
             <td style="padding: 8px;"><b>{s['ticker']}</b></td>
             <td style="padding: 8px; font-size: 11px;">{s['name']}</td>
             <td style="padding: 8px; font-size: 10px; color: #666;">{s['sector']}</td>
-            <td style="padding: 8px; text-align: center;">{age_text}</td>
+            <td style="padding: 8px; text-align: center;"><div style="{age_td_style} padding: 2px 4px;">{age_text}</div></td>
             <td style="padding: 8px;"><b>{s['close']:.2f}</b></td>
             <td style="padding: 8px; font-size: 11px; color: #444;">{s['ma20']:.1f} / {s['ma50']:.1f}</td>
             <td style="padding: 8px; {dist_style}">{s['dist_ma20']:+.1f}%</td>
@@ -180,18 +185,18 @@ def main():
         <div style="padding: 15px; border-bottom: 3px solid #eee;">
             <h3 style="color: #2c3e50; margin-bottom: 5px;">📊 Rynek: {name}</h3>
             {create_sector_summary(bullish, bearish)}
-            <h4 style="color: #27ae60; margin-bottom: 5px; margin-top: 15px;">🚀 Golden Cross (Bycze)</h4>
+            <h4 style="color: #27ae60; margin-bottom: 5px; margin-top: 15px;">🚀 Golden Cross</h4>
             {create_table_html(bullish)}
-            <h4 style="color: #c0392b; margin-bottom: 5px; margin-top: 15px;">📉 Death Cross (Niedźwiedzie)</h4>
+            <h4 style="color: #c0392b; margin-bottom: 5px; margin-top: 15px;">📉 Death Cross</h4>
             {create_table_html(bearish)}
         </div>"""
 
     full_report_html += """
         <div style="font-size: 10px; color: gray; padding: 20px;">
-            <b>Legenda kolorów:</b><br>
-            - <span style="color: #e67e22; font-weight: bold;">Pomarańczowy RSI:</span> Spółka wykupiona (>70) lub wyprzedana (<30).<br>
-            - <span style="color: #27ae60; font-weight: bold;">Zielony Vol/Avg:</span> Wolumen ponad 1.5x większy od średniej.<br>
-            - <span style="color: #e74c3c;">Czerwony Dystans:</span> Cena oddalona o ponad 5% od MA20.
+            <b>Legenda:</b><br>
+            - <span style="background-color: #007bff; color: white; padding: 1px 3px; font-weight: bold;">Dzisiaj</span>: Sygnał z ostatniej sesji.<br>
+            - <span style="color: #e67e22; font-weight: bold;">RSI</span>: >70 (wykupienie) lub <30 (wyprzedanie).<br>
+            - <span style="color: #27ae60; font-weight: bold;">Vol/Avg</span>: Obrót > 1.5x średniej 20-dniowej.
         </div>
     </body></html>"""
 
