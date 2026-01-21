@@ -32,10 +32,9 @@ def get_tickers(url):
         print(f"Błąd pobierania tickerów z {url}: {e}")
         return []
 
-def analyze_market(tickers):
+def analyze_market(tickers, lookback_window=5):
     if not tickers: return [], []
     
-    # Pobieranie danych (7 miesięcy dla poprawnego wyliczenia wskaźników)
     data = yf.download(tickers, period="7mo", group_by='ticker', auto_adjust=True, progress=False)
     bullish, bearish = [], []
     
@@ -45,70 +44,99 @@ def analyze_market(tickers):
             df = data[ticker].dropna().copy()
             if len(df) < 60: continue
             
-            # Obliczenia techniczne
+            # Wskaźniki
             df['MA20'] = df['Close'].rolling(window=20).mean()
             df['MA50'] = df['Close'].rolling(window=50).mean()
-            df['VolMA20'] = df['Volume'].rolling(window=20).mean() # Średni wolumen
+            df['VolMA20'] = df['Volume'].rolling(window=20).mean()
             df['RSI'] = ta.rsi(df['Close'], length=14)
             adx_df = ta.adx(df['High'], df['Low'], df['Close'], length=14)
             
-            today = df.iloc[-1]
-            yesterday = df.iloc[-2]
+            # Szukanie sygnału w ostatnich X dniach
+            found_type = None
+            sessions_ago = 0
             
-            # Nowe metryki: relacja wolumenu i odległość od MA20
-            vol_ratio = today['Volume'] / today['VolMA20'] if today['VolMA20'] > 0 else 0
-            dist_ma20 = ((today['Close'] - today['MA20']) / today['MA20']) * 100
-            
-            info = {
-                'ticker': ticker,
-                'close': today['Close'],
-                'ma20': today['MA20'],
-                'dist_ma20': dist_ma20,
-                'rsi': today['RSI'],
-                'adx': adx_df.iloc[-1]['ADX_14'] if adx_df is not None else 0,
-                'volume': today['Volume'],
-                'vol_ratio': vol_ratio
-            }
+            for i in range(1, lookback_window + 1):
+                today_idx = -i
+                yesterday_idx = -(i + 1)
+                
+                if abs(yesterday_idx) > len(df): break
+                
+                t_row = df.iloc[today_idx]
+                y_row = df.iloc[yesterday_idx]
+                
+                # Golden Cross
+                if y_row['MA20'] <= y_row['MA50'] and t_row['MA20'] > t_row['MA50']:
+                    found_type = 'bullish'
+                    sessions_ago = i - 1
+                    break
+                # Death Cross
+                elif y_row['MA20'] >= y_row['MA50'] and t_row['MA20'] < t_row['MA50']:
+                    found_type = 'bearish'
+                    sessions_ago = i - 1
+                    break
 
-            # Logika przecięcia średnich (Golden/Death Cross)
-            if yesterday['MA20'] <= yesterday['MA50'] and today['MA20'] > today['MA50']:
-                bullish.append(info)
-            elif yesterday['MA20'] >= yesterday['MA50'] and today['MA20'] < today['MA50']:
-                bearish.append(info)
+            if found_type:
+                today = df.iloc[-1]
+                adx_val = adx_df.iloc[-1]['ADX_14'] if adx_df is not None else 0
+                
+                info = {
+                    'ticker': ticker,
+                    'close': today['Close'],
+                    'ma20': today['MA20'],
+                    'ma50': today['MA50'],
+                    'dist_ma20': ((today['Close'] - today['MA20']) / today['MA20']) * 100,
+                    'rsi': today['RSI'],
+                    'adx': adx_val,
+                    'vol_ratio': today['Volume'] / today['VolMA20'] if today['VolMA20'] > 0 else 0,
+                    'age': sessions_ago
+                }
+                
+                if found_type == 'bullish': bullish.append(info)
+                else: bearish.append(info)
         except:
             continue
+            
+    # Sortowanie: najświeższe sygnały na górze
+    bullish.sort(key=lambda x: x['age'])
+    bearish.sort(key=lambda x: x['age'])
     return bullish, bearish
 
 def create_table_html(signals):
-    if not signals: return "<p style='color: gray;'>Brak sygnałów dla tej grupy.</p>"
+    if not signals: return "<p style='color: gray;'>Brak nowych sygnałów (ostatnie 5 sesji).</p>"
     
     rows = ""
     for s in signals:
-        # Style dla wyróżnienia danych
+        # Formatowanie wieku
+        age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']} sesje temu"
+        age_style = "font-weight: bold; color: #2c3e50;" if s['age'] == 0 else "color: #7f8c8d;"
+        
         rsi_style = "color: #e67e22; font-weight: bold;" if s['rsi'] > 70 or s['rsi'] < 30 else ""
-        vol_style = "color: #27ae60; font-weight: bold;" if s['vol_ratio'] > 1.5 else "" # Wysoki wolumen
-        dist_style = "color: #e74c3c;" if abs(s['dist_ma20']) > 5 else "" # Duże odchylenie od MA20
+        vol_style = "color: #27ae60; font-weight: bold;" if s['vol_ratio'] > 1.5 else ""
         
         rows += f"""
         <tr style="border-bottom: 1px solid #eee;">
             <td style="padding: 10px;"><b>{s['ticker']}</b></td>
+            <td style="padding: 10px; {age_style}">{age_text}</td>
             <td style="padding: 10px;">{s['close']:.2f}</td>
-            <td style="padding: 10px; {dist_style}">{s['dist_ma20']:+.2f}%</td>
+            <td style="padding: 10px; color: #444;">{s['ma20']:.2f}</td>
+            <td style="padding: 10px; color: #444;">{s['ma50']:.2f}</td>
+            <td style="padding: 10px;">{s['dist_ma20']:+.2f}%</td>
             <td style="padding: 10px; {rsi_style}">{s['rsi']:.1f}</td>
             <td style="padding: 10px;">{s['adx']:.1f}</td>
-            <td style="padding: 10px;">{s['volume']:,.0f}</td>
             <td style="padding: 10px; {vol_style}">{s['vol_ratio']:.2f}x</td>
         </tr>
         """
     return f"""
-    <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 25px;">
         <tr style="background-color: #f8f9fa; text-align: left; border-bottom: 2px solid #dee2e6;">
             <th style="padding: 10px;">Ticker</th>
+            <th style="padding: 10px;">Wiek sygnału</th>
             <th style="padding: 10px;">Cena</th>
+            <th style="padding: 10px;">MA20</th>
+            <th style="padding: 10px;">MA50</th>
             <th style="padding: 10px;">Dystans MA20</th>
             <th style="padding: 10px;">RSI (14)</th>
             <th style="padding: 10px;">ADX (14)</th>
-            <th style="padding: 10px;">Wolumen</th>
             <th style="padding: 10px;">Vol/Avg</th>
         </tr>
         {rows}
@@ -119,26 +147,24 @@ def main():
     date_str = datetime.date.today().strftime('%Y-%m-%d')
     full_report_html = f"""
     <html>
-    <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; line-height: 1.5;">
+    <body style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.5;">
         <div style="background-color: #2c3e50; color: white; padding: 20px; text-align: center;">
             <h1 style="margin: 0;">Raport S&P 500 & 600</h1>
-            <p style="margin: 5px 0 0 0;">Analiza sesji z dnia {date_str}</p>
+            <p style="margin: 5px 0 0 0;">Analiza z dnia {date_str} (okno 5 sesji)</p>
         </div>
         <div style="padding: 20px;">
     """
 
     for name, url in SOURCES.items():
-        print(f"Przetwarzanie {name}...")
+        print(f"Analiza rynku: {name}...")
         tickers = get_tickers(url)
         bullish, bearish = analyze_market(tickers)
         
         full_report_html += f"""
-            <h2 style="color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-top: 40px;">📊 Rynek: {name}</h2>
-            
-            <h3 style="color: #27ae60;">🚀 Golden Cross (MA20 ↑ MA50)</h3>
+            <h2 style="color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 5px; margin-top: 30px;">📊 Rynek: {name}</h2>
+            <h3 style="color: #27ae60;">🚀 Golden Cross (MA20 > MA50)</h3>
             {create_table_html(bullish)}
-            
-            <h3 style="color: #c0392b;">📉 Death Cross (MA20 ↓ MA50)</h3>
+            <h3 style="color: #c0392b;">📉 Death Cross (MA20 < MA50)</h3>
             {create_table_html(bearish)}
         """
 
@@ -146,10 +172,9 @@ def main():
         </div>
         <div style="background-color: #f8f9fa; padding: 15px; font-size: 11px; color: #7f8c8d; border-top: 1px solid #eee;">
             <p><b>Legenda:</b><br>
-            - <b>Dystans MA20:</b> Procentowa odległość ceny od średniej 20-dniowej.<br>
-            - <b>ADX > 25:</b> Sygnalizuje silny trend.<br>
-            - <b>Vol/Avg:</b> Stosunek dzisiejszego wolumenu do średniej z 20 dni (wartości > 1.5x wyróżnione na zielono).<br>
-            - <b>RSI:</b> Wartości < 30 (wyprzedanie) lub > 70 (wykupienie) wyróżnione na pomarańczowo.</p>
+            - <b>Wiek sygnału:</b> Ile sesji temu nastąpiło przecięcie (0 = sesja dzisiejsza).<br>
+            - <b>MA20/MA50:</b> Aktualne wartości średnich kroczących.<br>
+            - <b>Dystans MA20:</b> Procentowa odległość aktualnej ceny od średniej 20-dniowej.</p>
         </div>
     </body>
     </html>
@@ -157,18 +182,15 @@ def main():
 
     if EMAIL_SENDER and EMAIL_RECIPIENT:
         msg = EmailMessage()
-        msg['Subject'] = f"📈 Raport S&P 500/600: {date_str}"
+        msg['Subject'] = f"📊 Raport Sygnałów S&P 500/600 - {date_str}"
         msg['From'] = EMAIL_SENDER
         msg['To'] = EMAIL_RECIPIENT
         msg.add_alternative(full_report_html, subtype='html')
         
-        try:
-            with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
-                smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
-                smtp.send_message(msg)
-                print("E-mail wysłany pomyślnie.")
-        except Exception as e:
-            print(f"Błąd wysyłki: {e}")
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
+            smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            smtp.send_message(msg)
+            print("Raport z dodatkowymi danymi wysłany.")
 
 if __name__ == "__main__":
     main()
