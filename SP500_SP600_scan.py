@@ -27,23 +27,16 @@ def get_tickers_metadata(url):
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers)
         df = pd.read_html(StringIO(response.text), flavor='lxml')[0]
-        
-        df.rename(columns={
-            'Security': 'Name', 
-            'Company': 'Name', 
-            'GICS Sector': 'Sector'
-        }, inplace=True)
-        
+        df.rename(columns={'Security': 'Name', 'Company': 'Name', 'GICS Sector': 'Sector'}, inplace=True)
         df['Symbol'] = df['Symbol'].str.replace('.', '-')
         return df.set_index('Symbol')[['Name', 'Sector']].to_dict('index')
     except Exception as e:
-        print(f"Błąd pobierania metadanych: {e}")
+        print(f"Błąd metadanych: {e}")
         return {}
 
 def analyze_market(metadata, lookback_window=5):
     tickers = list(metadata.keys())
     if not tickers: return [], []
-    
     data = yf.download(tickers, period="7mo", group_by='ticker', auto_adjust=True, progress=False)
     bullish, bearish = [], []
     
@@ -52,7 +45,6 @@ def analyze_market(metadata, lookback_window=5):
             if ticker not in data.columns.levels[0]: continue
             df = data[ticker].dropna().copy()
             if len(df) < 60: continue
-            
             df['MA20'] = df['Close'].rolling(window=20).mean()
             df['MA50'] = df['Close'].rolling(window=50).mean()
             df['VolMA20'] = df['Volume'].rolling(window=20).mean()
@@ -60,156 +52,100 @@ def analyze_market(metadata, lookback_window=5):
             adx_df = ta.adx(df['High'], df['Low'], df['Close'], length=14)
             
             found_type, sessions_ago = None, 0
-            
             for i in range(1, lookback_window + 1):
-                today_idx, yesterday_idx = -i, -(i + 1)
-                if abs(yesterday_idx) > len(df): break
-                t_row, y_row = df.iloc[today_idx], df.iloc[yesterday_idx]
-                
-                if y_row['MA20'] <= y_row['MA50'] and t_row['MA20'] > t_row['MA50']:
+                t_idx, y_idx = -i, -(i + 1)
+                if abs(y_idx) > len(df): break
+                t_r, y_r = df.iloc[t_idx], df.iloc[y_idx]
+                if y_r['MA20'] <= y_r['MA50'] and t_r['MA20'] > t_r['MA50']:
                     found_type, sessions_ago = 'bullish', i - 1
                     break
-                elif y_row['MA20'] >= y_row['MA50'] and t_row['MA20'] < t_row['MA50']:
+                elif y_r['MA20'] >= y_r['MA50'] and t_r['MA20'] < t_r['MA50']:
                     found_type, sessions_ago = 'bearish', i - 1
                     break
 
             if found_type:
                 today = df.iloc[-1]
                 info = {
-                    'ticker': ticker,
-                    'name': metadata[ticker].get('Name', 'N/A'),
-                    'sector': metadata[ticker].get('Sector', 'N/A'),
-                    'close': today['Close'],
-                    'ma20': today['MA20'],
-                    'ma50': today['MA50'],
+                    'ticker': ticker, 'name': metadata[ticker].get('Name', 'N/A'),
+                    'sector': metadata[ticker].get('Sector', 'N/A'), 'close': today['Close'],
+                    'ma20': today['MA20'], 'ma50': today['MA50'],
                     'dist_ma20': ((today['Close'] - today['MA20']) / today['MA20']) * 100,
-                    'rsi': today['RSI'],
-                    'adx': adx_df.iloc[-1]['ADX_14'] if adx_df is not None else 0,
+                    'rsi': today['RSI'], 'adx': adx_df.iloc[-1]['ADX_14'] if adx_df is not None else 0,
                     'vol_ratio': today['Volume'] / today['VolMA20'] if today['VolMA20'] > 0 else 0,
                     'age': sessions_ago
                 }
-                if found_type == 'bullish': bullish.append(info)
-                else: bearish.append(info)
+                bullish.append(info) if found_type == 'bullish' else bearish.append(info)
         except: continue
-            
     return sorted(bullish, key=lambda x: x['age']), sorted(bearish, key=lambda x: x['age'])
 
 def create_sector_summary(bullish, bearish):
     b_sectors = Counter([s['sector'] for s in bullish])
     d_sectors = Counter([s['sector'] for s in bearish])
-    all_sectors = sorted(set(list(b_sectors.keys()) + list(d_sectors.keys())))
-    
-    if not all_sectors: return ""
-    
-    rows = ""
-    for sector in all_sectors:
-        b_count, d_count = b_sectors.get(sector, 0), d_sectors.get(sector, 0)
-        rows += f"""
-        <tr>
-            <td style="padding: 4px 10px; border-bottom: 1px solid #eee;">{sector}</td>
-            <td style="padding: 4px 10px; border-bottom: 1px solid #eee; text-align: center; color: green;"><b>{b_count if b_count > 0 else '-'}</b></td>
-            <td style="padding: 4px 10px; border-bottom: 1px solid #eee; text-align: center; color: red;"><b>{d_count if d_count > 0 else '-'}</b></td>
-        </tr>"""
-        
-    return f"""
-    <div style="margin: 10px 0; padding: 10px; background-color: #fcfcfc; border: 1px solid #eee; border-radius: 5px; display: inline-block;">
-        <h4 style="margin: 0 0 8px 0; color: #555; font-size: 13px;">Sektory - Podsumowanie (5 sesji):</h4>
-        <table style="font-size: 11px; border-collapse: collapse;">
-            <tr style="text-align: left; background: #f0f0f0;">
-                <th style="padding: 4px 10px;">Sektor</th>
-                <th style="padding: 4px 10px;">Golden</th>
-                <th style="padding: 4px 10px;">Death</th>
-            </tr>
-            {rows}
-        </table>
-    </div>"""
+    all_s = sorted(set(list(b_sectors.keys()) + list(d_sectors.keys())))
+    if not all_s: return ""
+    rows = "".join([f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee;'>{s}</td>"
+                    f"<td style='text-align:center;color:green;'><b>{b_sectors.get(s,'-')}</b></td>"
+                    f"<td style='text-align:center;color:red;'><b>{d_sectors.get(s,'-')}</b></td></tr>" for s in all_s])
+    return f"<div style='margin:10px 0;padding:12px;background:#fcfcfc;border:1px solid #eee;display:inline-block;'>" \
+           f"<h4 style='margin:0 0 8px 0;font-size:14px;'>Podsumowanie Sektorów:</h4>" \
+           f"<table style='font-size:13px;border-collapse:collapse;'><tr style='background:#f0f0f0;'>" \
+           f"<th>Sektor</th><th>Golden</th><th>Death</th></tr>{rows}</table></div>"
 
-def create_table_html(signals):
-    if not signals: return "<p style='color: gray; font-size: 12px;'>Brak sygnałów.</p>"
-    
+def create_table_html(signals, signal_type):
+    if not signals: return "<p style='color:gray;font-size:14px;'>Brak sygnałów.</p>"
     rows = ""
     for s in signals:
-        # --- KOLOROWANIE WIEKU (DLA WARTOŚCI DZISIAJ) ---
-        if s['age'] == 0:
-            age_text = "Dzisiaj"
-            age_td_style = "background-color: #007bff; color: white; font-weight: bold; border-radius: 3px;"
-        else:
-            age_text = f"{s['age']}d"
-            age_td_style = "color: #7f8c8d;"
-
-        # Pozostałe style
-        rsi_style = "color: #e67e22; font-weight: bold;" if s['rsi'] > 70 or s['rsi'] < 30 else ""
-        vol_style = "color: #27ae60; font-weight: bold;" if s['vol_ratio'] > 1.5 else ""
-        dist_style = "color: #e74c3c;" if abs(s['dist_ma20']) > 5 else ""
-
-        rows += f"""
-        <tr style="border-bottom: 1px solid #eee; font-size: 12px;">
-            <td style="padding: 8px;"><b>{s['ticker']}</b></td>
-            <td style="padding: 8px; font-size: 11px;">{s['name']}</td>
-            <td style="padding: 8px; font-size: 10px; color: #666;">{s['sector']}</td>
-            <td style="padding: 8px; text-align: center;"><div style="{age_td_style} padding: 2px 4px;">{age_text}</div></td>
-            <td style="padding: 8px;"><b>{s['close']:.2f}</b></td>
-            <td style="padding: 8px; font-size: 11px; color: #444;">{s['ma20']:.1f} / {s['ma50']:.1f}</td>
-            <td style="padding: 8px; {dist_style}">{s['dist_ma20']:+.1f}%</td>
-            <td style="padding: 8px; {rsi_style}">{s['rsi']:.1f}</td>
-            <td style="padding: 8px;">{s['adx']:.1f}</td>
-            <td style="padding: 8px; {vol_style}">{s['vol_ratio']:.2f}x</td>
-        </tr>"""
+        age_style = "background:#007bff;color:white;font-weight:bold;padding:2px 6px;border-radius:3px;" if s['age'] == 0 else "color:#7f8c8d;"
+        age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']}d"
+        rsi_style = "color:#e67e22;font-weight:bold;" if s['rsi']>70 or s['rsi']<30 else ""
+        vol_style = "color:#27ae60;font-weight:bold;" if s['vol_ratio']>1.5 else ""
         
-    return f"""
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px;">
-        <tr style="background-color: #f8f9fa; text-align: left; border-bottom: 2px solid #dee2e6; font-size: 11px;">
-            <th style="padding: 8px;">Ticker</th><th style="padding: 8px;">Nazwa</th><th style="padding: 8px;">Sektor</th>
-            <th style="padding: 8px; text-align: center;">Wiek</th><th style="padding: 8px;">Cena</th>
-            <th style="padding: 8px;">MA 20/50</th><th style="padding: 8px;">Dystans</th>
-            <th style="padding: 8px;">RSI</th><th style="padding: 8px;">ADX</th><th style="padding: 8px;">Vol/Avg</th>
-        </tr>
-        {rows}
-    </table>"""
+        # --- NOWA LOGIKA KOLOROWANIA DYSTANSU ---
+        if signal_type == 'bullish':
+            # Dla Golden Cross: cena powyżej średniej (+) to dobrze (zielony), poniżej (-) to słabość (czerwony)
+            dist_color = "#27ae60" if s['dist_ma20'] > 0 else "#e74c3c"
+        else:
+            # Dla Death Cross: cena powyżej średniej (+) to "niedźwiedzie" odbicie (czerwony), poniżej (-) to kontynuacja spadku (zielony)
+            dist_color = "#e74c3c" if s['dist_ma20'] > 0 else "#27ae60"
+        
+        dist_style = f"color: {dist_color}; font-weight: bold;"
+
+        rows += f"""<tr style="border-bottom:1px solid #eee;font-size:14px;">
+            <td style="padding:10px;"><b>{s['ticker']}</b></td><td style="font-size:13px;">{s['name']}</td>
+            <td style="font-size:12px;color:#666;">{s['sector']}</td>
+            <td style="text-align:center;"><span style="{age_style}">{age_text}</span></td>
+            <td><b>{s['close']:.2f}</b></td><td style="color:#444;">{s['ma20']:.1f}/{s['ma50']:.1f}</td>
+            <td style="{dist_style}">{s['dist_ma20']:+.1f}%</td><td style="{rsi_style}">{s['rsi']:.1f}</td>
+            <td>{s['adx']:.1f}</td><td style="{vol_style}">{s['vol_ratio']:.2f}x</td></tr>"""
+    
+    return f"""<table style="width:100%;border-collapse:collapse;margin-bottom:25px;">
+        <tr style="background:#f8f9fa;text-align:left;border-bottom:2px solid #dee2e6;font-size:13px;">
+        <th style="padding:10px;">Ticker</th><th>Nazwa</th><th>Sektor</th><th style="text-align:center;">Wiek</th><th>Cena</th><th>MA 20/50</th><th>Dystans</th><th>RSI</th><th>ADX</th><th>Vol/Avg</th></tr>{rows}</table>"""
 
 def main():
     date_str = datetime.date.today().strftime('%Y-%m-%d')
-    full_report_html = f"""
-    <html>
-    <body style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.4;">
-        <div style="background-color: #2c3e50; color: white; padding: 15px; text-align: center;">
-            <h2 style="margin: 0;">Raport S&P 500 & 600 - {date_str}</h2>
-        </div>"""
-
+    full_html = f"<html><body style='font-family:Segoe UI,Arial;color:#333;font-size:15px;'><div style='background:#2c3e50;color:white;padding:20px;text-align:center;'><h2>Raport S&P 500 & 600 - {date_str}</h2></div>"
     for name, url in SOURCES.items():
-        print(f"Przetwarzanie: {name}")
-        metadata = get_tickers_metadata(url)
-        bullish, bearish = analyze_market(metadata)
-        
-        full_report_html += f"""
-        <div style="padding: 15px; border-bottom: 3px solid #eee;">
-            <h3 style="color: #2c3e50; margin-bottom: 5px;">📊 Rynek: {name}</h3>
-            {create_sector_summary(bullish, bearish)}
-            <h4 style="color: #27ae60; margin-bottom: 5px; margin-top: 15px;">🚀 Golden Cross</h4>
-            {create_table_html(bullish)}
-            <h4 style="color: #c0392b; margin-bottom: 5px; margin-top: 15px;">📉 Death Cross</h4>
-            {create_table_html(bearish)}
-        </div>"""
-
-    full_report_html += """
-        <div style="font-size: 10px; color: gray; padding: 20px;">
-            <b>Legenda:</b><br>
-            - <span style="background-color: #007bff; color: white; padding: 1px 3px; font-weight: bold;">Dzisiaj</span>: Sygnał z ostatniej sesji.<br>
-            - <span style="color: #e67e22; font-weight: bold;">RSI</span>: >70 (wykupienie) lub <30 (wyprzedanie).<br>
-            - <span style="color: #27ae60; font-weight: bold;">Vol/Avg</span>: Obrót > 1.5x średniej 20-dniowej.
-        </div>
-    </body></html>"""
-
+        meta = get_tickers_metadata(url)
+        bull, bear = analyze_market(meta)
+        full_html += f"<div style='padding:20px;'><h3>📊 Rynek: {name}</h3>{create_sector_summary(bull, bear)}" \
+                     f"<h4 style='color:green;font-size:18px;'>🚀 Golden Cross (Bycze)</h4>{create_table_html(bull, 'bullish')}" \
+                     f"<h4 style='color:red;font-size:18px;'>📉 Death Cross (Niedźwiedzie)</h4>{create_table_html(bear, 'bearish')}</div>"
+    full_html += """<div style='font-size:12px;color:gray;padding:20px;border-top:1px solid #eee;'>
+        <b>Legenda:</b><br>
+        - <span style='background:#007bff;color:white;padding:1px 4px;font-weight:bold;'>Dzisiaj</span>: Sygnał z ostatniej sesji.<br>
+        - <b>Dystans</b>: Kolor zielony oznacza sytuację zgodną z kierunkiem sygnału (cena powyżej MA20 dla Golden, poniżej dla Death).<br>
+        - <span style='color:#e67e22;font-weight:bold;'>RSI</span>: Skrajne wykupienie (>70) lub wyprzedanie (<30).
+    </div></body></html>"""
+    
     if EMAIL_SENDER and EMAIL_RECIPIENT:
         msg = EmailMessage()
-        msg['Subject'] = f"📊 Raport Giełdowy S&P 500/600 - {date_str}"
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = EMAIL_RECIPIENT
-        msg.add_alternative(full_report_html, subtype='html')
+        msg['Subject'] = f"📊 Raport Giełdowy - {date_str}"
+        msg['From'], msg['To'] = EMAIL_SENDER, EMAIL_RECIPIENT
+        msg.add_alternative(full_html, subtype='html')
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
             smtp.send_message(msg)
-            print("Raport wysłany.")
+            print("Wysłano.")
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
