@@ -93,21 +93,40 @@ def create_sector_summary(bullish, bearish):
 
 def create_table_html(signals, signal_type):
     if not signals: return "<p style='color:gray;font-size:14px;'>Brak sygnałów.</p>"
+    
+    # Mapa kolorów dla kolumny Wiek
+    age_colors = {
+        0: "#007bff", # Niebieski (Dzisiaj)
+        1: "#28a745", # Zielony
+        2: "#ffc107", # Żółty/Amber
+        3: "#fd7e14", # Pomarańczowy
+        4: "#6f42c1"  # Fioletowy
+    }
+
     rows = ""
     for s in signals:
-        age_style = "background:#007bff;color:white;font-weight:bold;padding:2px 6px;border-radius:3px;" if s['age'] == 0 else "color:#7f8c8d;"
+        # Style dla Wieku
+        age_bg = age_colors.get(s['age'], "#7f8c8d")
         age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']}d"
+        age_style = f"background:{age_bg}; color:white; font-weight:bold; padding:2px 6px; border-radius:3px;"
+
+        # Style dla ADX
+        if s['adx'] > 25:
+            adx_style = "color: #27ae60; font-weight: bold;" # Zielony (silny trend)
+        elif 15 <= s['adx'] <= 25:
+            adx_style = "color: #d4a017; font-weight: bold;" # Żółty/Ciemny złoty (neutralny/budujący)
+        else:
+            adx_style = "color: #444;"
+
+        # Style dla RSI i Wolumenu
         rsi_style = "color:#e67e22;font-weight:bold;" if s['rsi']>70 or s['rsi']<30 else ""
         vol_style = "color:#27ae60;font-weight:bold;" if s['vol_ratio']>1.5 else ""
         
-        # --- NOWA LOGIKA KOLOROWANIA DYSTANSU ---
+        # Logika kolorowania Dystansu
         if signal_type == 'bullish':
-            # Dla Golden Cross: cena powyżej średniej (+) to dobrze (zielony), poniżej (-) to słabość (czerwony)
             dist_color = "#27ae60" if s['dist_ma20'] > 0 else "#e74c3c"
         else:
-            # Dla Death Cross: cena powyżej średniej (+) to "niedźwiedzie" odbicie (czerwony), poniżej (-) to kontynuacja spadku (zielony)
             dist_color = "#e74c3c" if s['dist_ma20'] > 0 else "#27ae60"
-        
         dist_style = f"color: {dist_color}; font-weight: bold;"
 
         rows += f"""<tr style="border-bottom:1px solid #eee;font-size:14px;">
@@ -116,7 +135,7 @@ def create_table_html(signals, signal_type):
             <td style="text-align:center;"><span style="{age_style}">{age_text}</span></td>
             <td><b>{s['close']:.2f}</b></td><td style="color:#444;">{s['ma20']:.1f}/{s['ma50']:.1f}</td>
             <td style="{dist_style}">{s['dist_ma20']:+.1f}%</td><td style="{rsi_style}">{s['rsi']:.1f}</td>
-            <td>{s['adx']:.1f}</td><td style="{vol_style}">{s['vol_ratio']:.2f}x</td></tr>"""
+            <td style="{adx_style}">{s['adx']:.1f}</td><td style="{vol_style}">{s['vol_ratio']:.2f}x</td></tr>"""
     
     return f"""<table style="width:100%;border-collapse:collapse;margin-bottom:25px;">
         <tr style="background:#f8f9fa;text-align:left;border-bottom:2px solid #dee2e6;font-size:13px;">
@@ -133,9 +152,9 @@ def main():
                      f"<h4 style='color:red;font-size:18px;'>📉 Death Cross (Niedźwiedzie)</h4>{create_table_html(bear, 'bearish')}</div>"
     full_html += """<div style='font-size:12px;color:gray;padding:20px;border-top:1px solid #eee;'>
         <b>Legenda:</b><br>
-        - <span style='background:#007bff;color:white;padding:1px 4px;font-weight:bold;'>Dzisiaj</span>: Sygnał z ostatniej sesji.<br>
-        - <b>Dystans</b>: Kolor zielony oznacza sytuację zgodną z kierunkiem sygnału (cena powyżej MA20 dla Golden, poniżej dla Death).<br>
-        - <span style='color:#e67e22;font-weight:bold;'>RSI</span>: Skrajne wykupienie (>70) lub wyprzedanie (<30).
+        - <b>Wiek</b>: Każdy dzień ma przypisany unikalny kolor (Niebieski = Dzisiaj, Zielony = 1d, itd.).<br>
+        - <b>ADX</b>: <span style='color:#27ae60;font-weight:bold;'>Zielony (>25)</span> oznacza silny trend, <span style='color:#d4a017;font-weight:bold;'>Żółty (15-25)</span> trend budujący się.<br>
+        - <b>Dystans</b>: Kolor zielony oznacza sytuację zgodną z kierunkiem sygnału.
     </div></body></html>"""
     
     if EMAIL_SENDER and EMAIL_RECIPIENT:
@@ -146,6 +165,6 @@ def main():
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
             smtp.send_message(msg)
-            print("Wysłano.")
+            print("Wysłano raport.")
 
 if __name__ == "__main__": main()
