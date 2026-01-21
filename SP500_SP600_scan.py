@@ -25,7 +25,7 @@ def get_tickers(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers)
-        df = pd.read_html(StringIO(response.text))[0]
+        df = pd.read_html(StringIO(response.text), flavor='lxml')[0]
         tickers = df['Symbol'].tolist()
         return [t.replace('.', '-') for t in tickers]
     except Exception as e:
