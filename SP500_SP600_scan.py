@@ -37,6 +37,7 @@ def get_tickers_metadata(url):
 def analyze_market(metadata, lookback_window=5):
     tickers = list(metadata.keys())
     if not tickers: return [], []
+    # Pobieranie danych z yfinance
     data = yf.download(tickers, period="7mo", group_by='ticker', auto_adjust=True, progress=False)
     bullish, bearish = [], []
     
@@ -45,6 +46,8 @@ def analyze_market(metadata, lookback_window=5):
             if ticker not in data.columns.levels[0]: continue
             df = data[ticker].dropna().copy()
             if len(df) < 60: continue
+            
+            # Obliczenia techniczne: MA20, MA50, RSI, ADX
             df['MA20'] = df['Close'].rolling(window=20).mean()
             df['MA50'] = df['Close'].rolling(window=50).mean()
             df['VolMA20'] = df['Volume'].rolling(window=20).mean()
@@ -56,6 +59,8 @@ def analyze_market(metadata, lookback_window=5):
                 t_idx, y_idx = -i, -(i + 1)
                 if abs(y_idx) > len(df): break
                 t_r, y_r = df.iloc[t_idx], df.iloc[y_idx]
+                
+                # Detekcja Golden i Death Cross
                 if y_r['MA20'] <= y_r['MA50'] and t_r['MA20'] > t_r['MA50']:
                     found_type, sessions_ago = 'bullish', i - 1
                     break
@@ -94,35 +99,32 @@ def create_sector_summary(bullish, bearish):
 def create_table_html(signals, signal_type):
     if not signals: return "<p style='color:gray;font-size:14px;'>Brak sygnałów.</p>"
     
-    # Mapa kolorów dla kolumny Wiek
-    age_colors = {
-        0: "#007bff", # Niebieski (Dzisiaj)
-        1: "#28a745", # Zielony
-        2: "#ffc107", # Żółty/Amber
-        3: "#fd7e14", # Pomarańczowy
-        4: "#6f42c1"  # Fioletowy
-    }
-
+    age_colors = {0: "#007bff", 1: "#28a745", 2: "#ffc107", 3: "#fd7e14", 4: "#6f42c1"}
     rows = ""
     for s in signals:
-        # Style dla Wieku
+        # Style Wieku
         age_bg = age_colors.get(s['age'], "#7f8c8d")
         age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']}d"
         age_style = f"background:{age_bg}; color:white; font-weight:bold; padding:2px 6px; border-radius:3px;"
 
-        # Style dla ADX
+        # --- LOGIKA ADX (15-25 pomarańczowy, >25 zielony) ---
         if s['adx'] > 25:
-            adx_style = "color: #27ae60; font-weight: bold;" # Zielony (silny trend)
+            adx_style = "color: #27ae60; font-weight: bold;"
         elif 15 <= s['adx'] <= 25:
-            adx_style = "color: #d4a017; font-weight: bold;" # Żółty/Ciemny złoty (neutralny/budujący)
+            adx_style = "color: #e67e22; font-weight: bold;"
         else:
             adx_style = "color: #444;"
 
-        # Style dla RSI i Wolumenu
+        # --- LOGIKA VOL/AVG (1-1.5 pomarańczowy, >1.5 zielony) ---
+        if s['vol_ratio'] > 1.5:
+            vol_style = "color: #27ae60; font-weight: bold;"
+        elif 1.0 <= s['vol_ratio'] <= 1.5:
+            vol_style = "color: #e67e22; font-weight: bold;"
+        else:
+            vol_style = "color: #444;"
+
+        # Style RSI i Dystansu
         rsi_style = "color:#e67e22;font-weight:bold;" if s['rsi']>70 or s['rsi']<30 else ""
-        vol_style = "color:#27ae60;font-weight:bold;" if s['vol_ratio']>1.5 else ""
-        
-        # Logika kolorowania Dystansu
         if signal_type == 'bullish':
             dist_color = "#27ae60" if s['dist_ma20'] > 0 else "#e74c3c"
         else:
@@ -150,11 +152,11 @@ def main():
         full_html += f"<div style='padding:20px;'><h3>📊 Rynek: {name}</h3>{create_sector_summary(bull, bear)}" \
                      f"<h4 style='color:green;font-size:18px;'>🚀 Golden Cross (Bycze)</h4>{create_table_html(bull, 'bullish')}" \
                      f"<h4 style='color:red;font-size:18px;'>📉 Death Cross (Niedźwiedzie)</h4>{create_table_html(bear, 'bearish')}</div>"
-    full_html += """<div style='font-size:12px;color:gray;padding:20px;border-top:1px solid #eee;'>
-        <b>Legenda:</b><br>
-        - <b>Wiek</b>: Każdy dzień ma przypisany unikalny kolor (Niebieski = Dzisiaj, Zielony = 1d, itd.).<br>
-        - <b>ADX</b>: <span style='color:#27ae60;font-weight:bold;'>Zielony (>25)</span> oznacza silny trend, <span style='color:#d4a017;font-weight:bold;'>Żółty (15-25)</span> trend budujący się.<br>
-        - <b>Dystans</b>: Kolor zielony oznacza sytuację zgodną z kierunkiem sygnału.
+    full_html += """<div style='font-size:13px;color:gray;padding:20px;border-top:1px solid #eee;'>
+        <b>Legenda kolorów:</b><br>
+        - <span style='color:#27ae60;font-weight:bold;'>Zielony ADX/Vol</span>: Silny trend (>25) lub bardzo wysoki obrót (>1.5x).<br>
+        - <span style='color:#e67e22;font-weight:bold;'>Pomarańczowy ADX/Vol</span>: Trend budujący się (15-25) lub podwyższony obrót (1.0-1.5x).<br>
+        - <b>Dystans</b>: Zielony = zgodny z kierunkiem sygnału, Czerwony = przeciwny.
     </div></body></html>"""
     
     if EMAIL_SENDER and EMAIL_RECIPIENT:
