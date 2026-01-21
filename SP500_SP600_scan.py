@@ -83,6 +83,7 @@ def analyze_market(metadata, lookback_window=5):
                     'close': today['Close'],
                     'ma20': today['MA20'],
                     'ma50': today['MA50'],
+                    'dist_ma20': ((today['Close'] - today['MA20']) / today['MA20']) * 100,
                     'rsi': today['RSI'],
                     'adx': adx_df.iloc[-1]['ADX_14'] if adx_df is not None else 0,
                     'vol_ratio': today['Volume'] / today['VolMA20'] if today['VolMA20'] > 0 else 0,
@@ -95,7 +96,6 @@ def analyze_market(metadata, lookback_window=5):
     return sorted(bullish, key=lambda x: x['age']), sorted(bearish, key=lambda x: x['age'])
 
 def create_sector_summary(bullish, bearish):
-    """Generuje tabelę zliczeń sygnałów na sektor."""
     b_sectors = Counter([s['sector'] for s in bullish])
     d_sectors = Counter([s['sector'] for s in bearish])
     all_sectors = sorted(set(list(b_sectors.keys()) + list(d_sectors.keys())))
@@ -108,46 +108,55 @@ def create_sector_summary(bullish, bearish):
         d_count = d_sectors.get(sector, 0)
         rows += f"""
         <tr>
-            <td style="padding: 5px 10px; border-bottom: 1px solid #eee;">{sector}</td>
-            <td style="padding: 5px 10px; border-bottom: 1px solid #eee; text-align: center; color: green;"><b>{b_count if b_count > 0 else '-'}</b></td>
-            <td style="padding: 5px 10px; border-bottom: 1px solid #eee; text-align: center; color: red;"><b>{d_count if d_count > 0 else '-'}</b></td>
+            <td style="padding: 4px 10px; border-bottom: 1px solid #eee;">{sector}</td>
+            <td style="padding: 4px 10px; border-bottom: 1px solid #eee; text-align: center; color: green;"><b>{b_count if b_count > 0 else '-'}</b></td>
+            <td style="padding: 4px 10px; border-bottom: 1px solid #eee; text-align: center; color: red;"><b>{d_count if d_count > 0 else '-'}</b></td>
         </tr>"""
         
     return f"""
-    <div style="margin: 10px 0; padding: 10px; background-color: #fcfcfc; border: 1px solid #eee; border-radius: 5px;">
-        <h4 style="margin: 0 0 10px 0; color: #555;">Sektory - Podsumowanie:</h4>
+    <div style="margin: 10px 0; padding: 10px; background-color: #fcfcfc; border: 1px solid #eee; border-radius: 5px; display: inline-block;">
+        <h4 style="margin: 0 0 8px 0; color: #555; font-size: 13px;">Sektory - Podsumowanie:</h4>
         <table style="font-size: 11px; border-collapse: collapse;">
             <tr style="text-align: left; background: #f0f0f0;">
-                <th style="padding: 5px 10px;">Sektor</th>
-                <th style="padding: 5px 10px;">Golden</th>
-                <th style="padding: 5px 10px;">Death</th>
+                <th style="padding: 4px 10px;">Sektor</th>
+                <th style="padding: 4px 10px;">Golden</th>
+                <th style="padding: 4px 10px;">Death</th>
             </tr>
             {rows}
         </table>
     </div>"""
 
 def create_table_html(signals):
-    if not signals: return "<p style='color: gray; font-size: 12px;'>Brak sygnałów.</p>"
+    if not signals: return "<p style='color: gray; font-size: 12px;'>Brak sygnałów w oknie 5 dni.</p>"
+    
     rows = ""
     for s in signals:
         age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']}d"
+        # Przywrócone style kolorystyczne
+        rsi_style = "color: #e67e22; font-weight: bold;" if s['rsi'] > 70 or s['rsi'] < 30 else ""
+        vol_style = "color: #27ae60; font-weight: bold;" if s['vol_ratio'] > 1.5 else ""
+        dist_style = "color: #e74c3c;" if abs(s['dist_ma20']) > 5 else ""
+
         rows += f"""
         <tr style="border-bottom: 1px solid #eee; font-size: 12px;">
             <td style="padding: 8px;"><b>{s['ticker']}</b></td>
             <td style="padding: 8px; font-size: 11px;">{s['name']}</td>
             <td style="padding: 8px; font-size: 10px; color: #666;">{s['sector']}</td>
             <td style="padding: 8px; text-align: center;">{age_text}</td>
-            <td style="padding: 8px;">{s['close']:.2f}</td>
+            <td style="padding: 8px;"><b>{s['close']:.2f}</b></td>
             <td style="padding: 8px; font-size: 11px; color: #444;">{s['ma20']:.1f} / {s['ma50']:.1f}</td>
-            <td style="padding: 8px;">{s['rsi']:.1f}</td>
+            <td style="padding: 8px; {dist_style}">{s['dist_ma20']:+.1f}%</td>
+            <td style="padding: 8px; {rsi_style}">{s['rsi']:.1f}</td>
             <td style="padding: 8px;">{s['adx']:.1f}</td>
-            <td style="padding: 8px;">{s['vol_ratio']:.2f}x</td>
+            <td style="padding: 8px; {vol_style}">{s['vol_ratio']:.2f}x</td>
         </tr>"""
+        
     return f"""
-    <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 25px;">
         <tr style="background-color: #f8f9fa; text-align: left; border-bottom: 2px solid #dee2e6; font-size: 11px;">
             <th style="padding: 8px;">Ticker</th><th style="padding: 8px;">Nazwa</th><th style="padding: 8px;">Sektor</th>
-            <th style="padding: 8px;">Wiek</th><th style="padding: 8px;">Cena</th><th style="padding: 8px;">MA 20/50</th>
+            <th style="padding: 8px; text-align: center;">Wiek</th><th style="padding: 8px;">Cena</th>
+            <th style="padding: 8px;">MA 20/50</th><th style="padding: 8px;">Dystans</th>
             <th style="padding: 8px;">RSI</th><th style="padding: 8px;">ADX</th><th style="padding: 8px;">Vol/Avg</th>
         </tr>
         {rows}
@@ -163,7 +172,7 @@ def main():
         </div>"""
 
     for name, url in SOURCES.items():
-        print(f"Analiza: {name}")
+        print(f"Przetwarzanie: {name}")
         metadata = get_tickers_metadata(url)
         bullish, bearish = analyze_market(metadata)
         
@@ -171,17 +180,24 @@ def main():
         <div style="padding: 15px; border-bottom: 3px solid #eee;">
             <h3 style="color: #2c3e50; margin-bottom: 5px;">📊 Rynek: {name}</h3>
             {create_sector_summary(bullish, bearish)}
-            <h4 style="color: #27ae60; margin-bottom: 5px;">🚀 Golden Cross</h4>
+            <h4 style="color: #27ae60; margin-bottom: 5px; margin-top: 15px;">🚀 Golden Cross (Bycze)</h4>
             {create_table_html(bullish)}
-            <h4 style="color: #c0392b; margin-bottom: 5px;">📉 Death Cross</h4>
+            <h4 style="color: #c0392b; margin-bottom: 5px; margin-top: 15px;">📉 Death Cross (Niedźwiedzie)</h4>
             {create_table_html(bearish)}
         </div>"""
 
-    full_report_html += "</body></html>"
+    full_report_html += """
+        <div style="font-size: 10px; color: gray; padding: 20px;">
+            <b>Legenda kolorów:</b><br>
+            - <span style="color: #e67e22; font-weight: bold;">Pomarańczowy RSI:</span> Spółka wykupiona (>70) lub wyprzedana (<30).<br>
+            - <span style="color: #27ae60; font-weight: bold;">Zielony Vol/Avg:</span> Wolumen ponad 1.5x większy od średniej.<br>
+            - <span style="color: #e74c3c;">Czerwony Dystans:</span> Cena oddalona o ponad 5% od MA20.
+        </div>
+    </body></html>"""
 
     if EMAIL_SENDER and EMAIL_RECIPIENT:
         msg = EmailMessage()
-        msg['Subject'] = f"📊 Raport Sektorowy S&P 500/600 - {date_str}"
+        msg['Subject'] = f"📊 Raport Giełdowy S&P 500/600 - {date_str}"
         msg['From'] = EMAIL_SENDER
         msg['To'] = EMAIL_RECIPIENT
         msg.add_alternative(full_report_html, subtype='html')
