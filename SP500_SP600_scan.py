@@ -37,7 +37,6 @@ def get_tickers_metadata(url):
 def analyze_market(metadata, lookback_window=5):
     tickers = list(metadata.keys())
     if not tickers: return [], []
-    # Pobieranie danych z yfinance
     data = yf.download(tickers, period="7mo", group_by='ticker', auto_adjust=True, progress=False)
     bullish, bearish = [], []
     
@@ -47,7 +46,6 @@ def analyze_market(metadata, lookback_window=5):
             df = data[ticker].dropna().copy()
             if len(df) < 60: continue
             
-            # Obliczenia techniczne: MA20, MA50, RSI, ADX
             df['MA20'] = df['Close'].rolling(window=20).mean()
             df['MA50'] = df['Close'].rolling(window=50).mean()
             df['VolMA20'] = df['Volume'].rolling(window=20).mean()
@@ -60,7 +58,6 @@ def analyze_market(metadata, lookback_window=5):
                 if abs(y_idx) > len(df): break
                 t_r, y_r = df.iloc[t_idx], df.iloc[y_idx]
                 
-                # Detekcja Golden i Death Cross
                 if y_r['MA20'] <= y_r['MA50'] and t_r['MA20'] > t_r['MA50']:
                     found_type, sessions_ago = 'bullish', i - 1
                     break
@@ -102,12 +99,11 @@ def create_table_html(signals, signal_type):
     age_colors = {0: "#007bff", 1: "#28a745", 2: "#ffc107", 3: "#fd7e14", 4: "#6f42c1"}
     rows = ""
     for s in signals:
-        # Style Wieku
         age_bg = age_colors.get(s['age'], "#7f8c8d")
         age_text = "Dzisiaj" if s['age'] == 0 else f"{s['age']}d"
         age_style = f"background:{age_bg}; color:white; font-weight:bold; padding:2px 6px; border-radius:3px;"
 
-        # --- LOGIKA ADX (15-25 pomarańczowy, >25 zielony) ---
+        # --- LOGIKA ADX ---
         if s['adx'] > 25:
             adx_style = "color: #27ae60; font-weight: bold;"
         elif 15 <= s['adx'] <= 25:
@@ -115,7 +111,7 @@ def create_table_html(signals, signal_type):
         else:
             adx_style = "color: #444;"
 
-        # --- LOGIKA VOL/AVG (1-1.5 pomarańczowy, >1.5 zielony) ---
+        # --- LOGIKA VOL/AVG ---
         if s['vol_ratio'] > 1.5:
             vol_style = "color: #27ae60; font-weight: bold;"
         elif 1.0 <= s['vol_ratio'] <= 1.5:
@@ -123,8 +119,13 @@ def create_table_html(signals, signal_type):
         else:
             vol_style = "color: #444;"
 
-        # Style RSI i Dystansu
-        rsi_style = "color:#e67e22;font-weight:bold;" if s['rsi']>70 or s['rsi']<30 else ""
+        # --- NOWA LOGIKA RSI (30-70 zielony, reszta pomarańczowy) ---
+        if 30 <= s['rsi'] <= 70:
+            rsi_style = "color: #27ae60; font-weight: bold;"
+        else:
+            rsi_style = "color: #e67e22; font-weight: bold;"
+        
+        # Logika kolorowania Dystansu
         if signal_type == 'bullish':
             dist_color = "#27ae60" if s['dist_ma20'] > 0 else "#e74c3c"
         else:
@@ -154,9 +155,10 @@ def main():
                      f"<h4 style='color:red;font-size:18px;'>📉 Death Cross (Niedźwiedzie)</h4>{create_table_html(bear, 'bearish')}</div>"
     full_html += """<div style='font-size:13px;color:gray;padding:20px;border-top:1px solid #eee;'>
         <b>Legenda kolorów:</b><br>
-        - <span style='color:#27ae60;font-weight:bold;'>Zielony ADX/Vol</span>: Silny trend (>25) lub bardzo wysoki obrót (>1.5x).<br>
-        - <span style='color:#e67e22;font-weight:bold;'>Pomarańczowy ADX/Vol</span>: Trend budujący się (15-25) lub podwyższony obrót (1.0-1.5x).<br>
-        - <b>Dystans</b>: Zielony = zgodny z kierunkiem sygnału, Czerwony = przeciwny.
+        - <b>Wiek</b>: Unikalny kolor dla każdego dnia (Niebieski = Dzisiaj, Zielony = 1d, itd.).<br>
+        - <b>RSI</b>: <span style='color:#27ae60;font-weight:bold;'>Zielony (30-70)</span> zakres neutralny, <span style='color:#e67e22;font-weight:bold;'>Pomarańczowy</span> skrajne wykupienie/wyprzedanie.<br>
+        - <b>ADX/Vol</b>: <span style='color:#27ae60;font-weight:bold;'>Zielony</span> silny trend/wysoki obrót, <span style='color:#e67e22;font-weight:bold;'>Pomarańczowy</span> budowanie trendu/podwyższony obrót.<br>
+        - <b>Dystans</b>: Zielony = zgodny z kierunkiem sygnału.
     </div></body></html>"""
     
     if EMAIL_SENDER and EMAIL_RECIPIENT:
